@@ -1,0 +1,5 @@
+__pycache__/
+*.tmp
+.env
+source_config.json
+*-source-config.json
