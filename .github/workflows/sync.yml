@@ -1,0 +1,33 @@
+name: Update encrypted proxy mirror
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  push:
+    branches: [main]
+    paths: ['sync.py', '.github/workflows/sync.yml']
+permissions:
+  contents: write
+concurrency:
+  group: proxy-mirror-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Fetch encrypted cloud data
+        env:
+          SOURCE_CONFIG: ${{ secrets.SOURCE_CONFIG }}
+        run: python3 sync.py
+      - name: Publish changes only
+        run: |
+          git add -- data/mirror.json
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Update encrypted proxy mirror'
+          git push origin HEAD:main
