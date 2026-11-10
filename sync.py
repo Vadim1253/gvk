@@ -32,7 +32,7 @@ def encrypted(entry, cipher):
     if not 16 <= len(base64.b64decode(payload, validate=True)) <= LIMIT: raise ValueError('Invalid ciphertext')
     return {'nonce': nonce, cipher: payload}
 
-def public_mirror(catalog, state):
+def public_mirror(catalog, state, source=None):
     if catalog['format'] != 'goodini-vpn-standalone-v1': raise ValueError('Invalid catalog')
     keys = {}
     for digest, entry in catalog['keys'].items():
@@ -44,18 +44,30 @@ def public_mirror(catalog, state):
     if type(state['count']) is not int or not 1 <= state['count'] <= 20000: raise ValueError('Invalid count')
     batch = catalog['batch']
     if not isinstance(batch,str) or not re.fullmatch('[a-zA-Z0-9_.-]{1,128}',batch): raise ValueError('Invalid batch')
-    return {
+    result = {
         'format':'goodini-github-mirror-v1',
         'catalog':{'format':catalog['format'],'batch':batch,'keys':keys},
         'state':{'payload':{'format':'goodini-vpn-live-v1', **encrypted(state['payload'],'ciphertext')},
                  'revision':state['revision'],'count':state['count']},
     }
+    if state.get('updated_at'):
+        datetime.fromisoformat(state['updated_at'].replace('Z', '+00:00'))
+        result['state']['updated_at'] = state['updated_at']
+    if source is not None:
+        if source['format'] != 'goodini-vpn-proxies-v1': raise ValueError('Invalid source')
+        updated = datetime.fromisoformat(source['updated_at'].replace('Z', '+00:00'))
+        if updated.tzinfo is None: raise ValueError('Invalid source timestamp')
+        result['source'] = {'payload': {'format': source['format'], **encrypted(source, 'ciphertext')},
+                            'revision': int(updated.timestamp() * 1000000),
+                            'updated_at': source['updated_at']}
+    return result
 
 def update(config, target):
     catalog = fetch(config['catalog_url'])
     state = fetch(config['api_url'] + 'gvpn_desktop_read', {'p_key':config['read_token']},
                   {'apikey':config['public_key'],'Authorization':'Bearer '+config['public_key']})
-    result = public_mirror(catalog, state)
+    source = fetch(config['source_url']) if config.get('source_url') else None
+    result = public_mirror(catalog, state, source)
     if target.exists():
         old = json.loads(target.read_text(encoding='utf-8'))
         old.pop('synced_at', None)
@@ -63,7 +75,8 @@ def update(config, target):
     result['synced_at'] = datetime.now(timezone.utc).isoformat()
     raw = json.dumps(result, ensure_ascii=True, separators=(',',':'))
     # Only explicitly selected encrypted fields may be made public.
-    for field in ('read_token','public_key','catalog_url','api_url'):
+    for field in ('read_token','public_key','catalog_url','api_url','source_url'):
+        if field not in config: continue
         if config[field] in raw: raise ValueError('Source credential in output')
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix('.tmp')
